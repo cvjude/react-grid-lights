@@ -72,6 +72,12 @@ interface Explosion {
   opacity: number;
 }
 
+interface NodeGlow {
+  x: number;
+  y: number;
+  opacity: number;
+}
+
 export function Grid({
   shape = 4,
   cellSize = 40,
@@ -101,6 +107,7 @@ export function Grid({
   const dimensionsRef = useRef({ width: 0, height: 0 });
   const activeEdgesRef = useRef<Set<string>>(new Set());
   const explosionsRef = useRef<Explosion[]>([]);
+  const nodeGlowsRef = useRef<NodeGlow[]>([]);
 
   const nodeKey = (x: number, y: number) => `${Math.round(x * 100)},${Math.round(y * 100)}`;
   const edgeKey = (n1: Node, n2: Node) => {
@@ -234,10 +241,10 @@ export function Grid({
       for (const trail of trailsRef.current) {
         if (trail.opacity <= 0) continue;
 
-        const alpha = Math.floor(trail.opacity * 0.15 * 255).toString(16).padStart(2, '0');
+        const alpha = Math.floor(trail.opacity * 0.08 * 255).toString(16).padStart(2, '0');
 
         ctx.strokeStyle = lightColor + alpha;
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1;
         ctx.lineCap = "round";
         ctx.beginPath();
         ctx.moveTo(trail.fromX, trail.fromY);
@@ -252,7 +259,7 @@ export function Grid({
         ctx.stroke();
 
         ctx.shadowColor = lightColor;
-        ctx.shadowBlur = 4;
+        ctx.shadowBlur = 2;
         ctx.stroke();
         ctx.shadowBlur = 0;
       }
@@ -301,6 +308,33 @@ export function Grid({
         maxRadius: 8,
         opacity: 1,
       });
+    };
+
+    const createNodeGlow = (x: number, y: number) => {
+      nodeGlowsRef.current.push({
+        x,
+        y,
+        opacity: 1,
+      });
+    };
+
+    const drawNodeGlows = (ctx: CanvasRenderingContext2D) => {
+      for (const glow of nodeGlowsRef.current) {
+        if (glow.opacity <= 0) continue;
+
+        const alpha = Math.floor(glow.opacity * 0.4 * 255).toString(16).padStart(2, '0');
+        ctx.fillStyle = lightColor + alpha;
+        ctx.beginPath();
+        ctx.arc(glow.x, glow.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+
+    const updateNodeGlows = () => {
+      for (const glow of nodeGlowsRef.current) {
+        glow.opacity -= trailFadeSpeed * 3;
+      }
+      nodeGlowsRef.current = nodeGlowsRef.current.filter(g => g.opacity > 0);
     };
 
     const getRandomTravel = () => {
@@ -374,6 +408,7 @@ export function Grid({
         }
 
         if (particle.progress >= 1) {
+          createNodeGlow(particle.targetNode.x, particle.targetNode.y);
           particle.traveled++;
 
           if (particle.traveled >= particle.maxTravel) {
@@ -503,7 +538,9 @@ export function Grid({
         updateParticles();
         updateTrails();
         updateExplosions();
+        updateNodeGlows();
         drawTrails(ctx);
+        drawNodeGlows(ctx);
         drawParticles(ctx);
         drawExplosions(ctx);
       }
@@ -532,6 +569,7 @@ export function Grid({
       trailsRef.current = [];
       activeEdgesRef.current.clear();
       explosionsRef.current = [];
+      nodeGlowsRef.current = [];
     };
 
     const resizeObserver = new ResizeObserver(() => {
