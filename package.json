@@ -1,0 +1,66 @@
+{
+  "name": "react-grid-lights",
+  "version": "1.0.0",
+  "description": "A React component for animated grid backgrounds with traveling light particles. Supports square and hexagonal grids with customizable animations.",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "lint": "eslint src/",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "react",
+    "grid",
+    "animation",
+    "canvas",
+    "hexagon",
+    "background",
+    "lights",
+    "particles",
+    "ui",
+    "component"
+  ],
+  "author": "Chinoso Jude",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cvjude/react-grid-lights"
+  },
+  "bugs": {
+    "url": "https://github.com/cvjude/react-grid-lights/issues"
+  },
+  "homepage": "https://github.com/cvjude/react-grid-lights",
+  "peerDependencies": {
+    "react": ">=17.0.0",
+    "react-dom": ">=17.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0"
+  }
+}
