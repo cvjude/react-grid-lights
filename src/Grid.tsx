@@ -1,6 +1,6 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback } from 'react';
 
 export interface GridProps {
   /** Grid shape: 4 for squares, 6 for hexagons */
@@ -29,6 +29,8 @@ export interface GridProps {
   splitChance?: number;
   /** Speed at which trails fade (lower = slower fade) */
   trailFadeSpeed?: number;
+  /** Enable spawning particles from the bottom as well as the top */
+  bidirectional?: boolean;
 }
 
 interface Node {
@@ -52,6 +54,8 @@ interface Particle {
   maxTravel: number;
   canSplit: boolean;
   dead: boolean;
+  direction: 1 | -1;
+  history: { x: number; y: number }[];
 }
 
 interface Trail {
@@ -81,17 +85,18 @@ interface NodeGlow {
 export function Grid({
   shape = 4,
   cellSize = 40,
-  lineColor = "#e5e7eb",
+  lineColor = '#e5e7eb',
   lineWidth = 1,
-  className = "",
+  className = '',
   animated = false,
-  lightColor = "#3b82f6",
+  lightColor = '#3b82f6',
   lightSpeed = 2,
   minTravel = 2,
   maxTravel = 6,
   spawnRate = 1000,
   splitChance = 0.3,
   trailFadeSpeed = 0.01,
+  bidirectional = false,
 }: GridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -99,6 +104,7 @@ export function Grid({
   const edgesRef = useRef<Edge[]>([]);
   const adjacencyRef = useRef<Map<string, Edge[]>>(new Map());
   const topNodesRef = useRef<Node[]>([]);
+  const bottomNodesRef = useRef<Node[]>([]);
   const animationRef = useRef<number>(0);
   const particlesRef = useRef<Particle[]>([]);
   const trailsRef = useRef<Trail[]>([]);
@@ -108,8 +114,10 @@ export function Grid({
   const activeEdgesRef = useRef<Set<string>>(new Set());
   const explosionsRef = useRef<Explosion[]>([]);
   const nodeGlowsRef = useRef<NodeGlow[]>([]);
+  const spawnFromTopRef = useRef<boolean>(true);
 
-  const nodeKey = (x: number, y: number) => `${Math.round(x * 100)},${Math.round(y * 100)}`;
+  const nodeKey = (x: number, y: number) =>
+    `${Math.round(x * 100)},${Math.round(y * 100)}`;
   const edgeKey = (n1: Node, n2: Node) => {
     const keys = [n1.key, n2.key].sort();
     return `${keys[0]}-${keys[1]}`;
@@ -123,98 +131,123 @@ export function Grid({
     return nodesRef.current.get(key)!;
   }, []);
 
-  const addEdge = useCallback((x1: number, y1: number, x2: number, y2: number) => {
-    const from = getOrCreateNode(x1, y1);
-    const to = getOrCreateNode(x2, y2);
-    const key = edgeKey(from, to);
+  const addEdge = useCallback(
+    (x1: number, y1: number, x2: number, y2: number) => {
+      const from = getOrCreateNode(x1, y1);
+      const to = getOrCreateNode(x2, y2);
+      const key = edgeKey(from, to);
 
-    const existingEdge = edgesRef.current.find(e => e.key === key);
-    if (existingEdge) return;
+      const existingEdge = edgesRef.current.find((e) => e.key === key);
+      if (existingEdge) return;
 
-    const edge: Edge = { from, to, key };
-    edgesRef.current.push(edge);
+      const edge: Edge = { from, to, key };
+      edgesRef.current.push(edge);
 
-    if (!adjacencyRef.current.has(from.key)) {
-      adjacencyRef.current.set(from.key, []);
-    }
-    if (!adjacencyRef.current.has(to.key)) {
-      adjacencyRef.current.set(to.key, []);
-    }
-    adjacencyRef.current.get(from.key)!.push(edge);
-    adjacencyRef.current.get(to.key)!.push(edge);
-  }, [getOrCreateNode]);
-
-  const buildSquareGraph = useCallback((width: number, height: number) => {
-    nodesRef.current.clear();
-    edgesRef.current = [];
-    adjacencyRef.current.clear();
-    topNodesRef.current = [];
-
-    const cols = Math.ceil(width / cellSize) + 1;
-    const rows = Math.ceil(height / cellSize) + 1;
-
-    for (let i = 0; i <= cols; i++) {
-      for (let j = 0; j <= rows; j++) {
-        const x = i * cellSize;
-        const y = j * cellSize;
-        if (i < cols) addEdge(x, y, x + cellSize, y);
-        if (j < rows) addEdge(x, y, x, y + cellSize);
+      if (!adjacencyRef.current.has(from.key)) {
+        adjacencyRef.current.set(from.key, []);
       }
-    }
+      if (!adjacencyRef.current.has(to.key)) {
+        adjacencyRef.current.set(to.key, []);
+      }
+      adjacencyRef.current.get(from.key)!.push(edge);
+      adjacencyRef.current.get(to.key)!.push(edge);
+    },
+    [getOrCreateNode]
+  );
 
-    for (let i = 0; i <= cols; i++) {
-      const node = nodesRef.current.get(nodeKey(i * cellSize, 0));
-      if (node) topNodesRef.current.push(node);
-    }
-  }, [cellSize, addEdge]);
+  const buildSquareGraph = useCallback(
+    (width: number, height: number) => {
+      nodesRef.current.clear();
+      edgesRef.current = [];
+      adjacencyRef.current.clear();
+      topNodesRef.current = [];
+      bottomNodesRef.current = [];
 
-  const buildHexGraph = useCallback((width: number, height: number) => {
-    nodesRef.current.clear();
-    edgesRef.current = [];
-    adjacencyRef.current.clear();
-    topNodesRef.current = [];
+      const cols = Math.ceil(width / cellSize) + 1;
+      const rows = Math.ceil(height / cellSize) + 1;
 
-    const size = cellSize / 2;
-    const hexWidth = Math.sqrt(3) * size;
-    const vertSpacing = size * 1.5;
-
-    const cols = Math.ceil(width / hexWidth) + 2;
-    const rows = Math.ceil(height / vertSpacing) + 2;
-
-    for (let row = -1; row < rows; row++) {
-      for (let col = -1; col < cols; col++) {
-        const cx = col * hexWidth + (row % 2 === 0 ? 0 : hexWidth / 2);
-        const cy = row * vertSpacing;
-
-        const vertices: { x: number; y: number }[] = [];
-        for (let i = 0; i < 6; i++) {
-          const angle = (Math.PI / 3) * i - Math.PI / 2;
-          vertices.push({
-            x: cx + size * Math.cos(angle),
-            y: cy + size * Math.sin(angle),
-          });
-        }
-
-        for (let i = 0; i < 6; i++) {
-          const v1 = vertices[i];
-          const v2 = vertices[(i + 1) % 6];
-          addEdge(v1.x, v1.y, v2.x, v2.y);
+      for (let i = 0; i <= cols; i++) {
+        for (let j = 0; j <= rows; j++) {
+          const x = i * cellSize;
+          const y = j * cellSize;
+          if (i < cols) addEdge(x, y, x + cellSize, y);
+          if (j < rows) addEdge(x, y, x, y + cellSize);
         }
       }
-    }
 
-    const sortedNodes = Array.from(nodesRef.current.values())
-      .filter(n => n.y >= 0 && n.y <= size)
-      .sort((a, b) => a.x - b.x);
-    topNodesRef.current = sortedNodes;
-  }, [cellSize, addEdge]);
+      const maxY = rows * cellSize;
+      for (let i = 0; i <= cols; i++) {
+        const topNode = nodesRef.current.get(nodeKey(i * cellSize, 0));
+        if (topNode) topNodesRef.current.push(topNode);
 
-  const getConnectedNodes = useCallback((node: Node, excludeNode?: Node): Node[] => {
-    const edges = adjacencyRef.current.get(node.key) || [];
-    return edges
-      .map(e => (e.from.key === node.key ? e.to : e.from))
-      .filter(n => !excludeNode || n.key !== excludeNode.key);
-  }, []);
+        const bottomNode = nodesRef.current.get(nodeKey(i * cellSize, maxY));
+        if (bottomNode) bottomNodesRef.current.push(bottomNode);
+      }
+    },
+    [cellSize, addEdge]
+  );
+
+  const buildHexGraph = useCallback(
+    (width: number, height: number) => {
+      nodesRef.current.clear();
+      edgesRef.current = [];
+      adjacencyRef.current.clear();
+      topNodesRef.current = [];
+      bottomNodesRef.current = [];
+
+      const size = cellSize / 2;
+      const hexWidth = Math.sqrt(3) * size;
+      const vertSpacing = size * 1.5;
+
+      const cols = Math.ceil(width / hexWidth) + 2;
+      const rows = Math.ceil(height / vertSpacing) + 2;
+
+      for (let row = -1; row < rows; row++) {
+        for (let col = -1; col < cols; col++) {
+          const cx = col * hexWidth + (row % 2 === 0 ? 0 : hexWidth / 2);
+          const cy = row * vertSpacing;
+
+          const vertices: { x: number; y: number }[] = [];
+          for (let i = 0; i < 6; i++) {
+            const angle = (Math.PI / 3) * i - Math.PI / 2;
+            vertices.push({
+              x: cx + size * Math.cos(angle),
+              y: cy + size * Math.sin(angle),
+            });
+          }
+
+          for (let i = 0; i < 6; i++) {
+            const v1 = vertices[i];
+            const v2 = vertices[(i + 1) % 6];
+            addEdge(v1.x, v1.y, v2.x, v2.y);
+          }
+        }
+      }
+
+      const allNodes = Array.from(nodesRef.current.values());
+
+      const visibleNodes = allNodes.filter((n) => n.y >= 0 && n.y <= height);
+
+      topNodesRef.current = visibleNodes
+        .filter((n) => n.y <= size * 2)
+        .sort((a, b) => a.x - b.x);
+
+      bottomNodesRef.current = visibleNodes
+        .filter((n) => n.y >= height - size * 2)
+        .sort((a, b) => a.x - b.x);
+    },
+    [cellSize, addEdge]
+  );
+
+  const getConnectedNodes = useCallback(
+    (node: Node, excludeNode?: Node): Node[] => {
+      const edges = adjacencyRef.current.get(node.key) || [];
+      return edges
+        .map((e) => (e.from.key === node.key ? e.to : e.from))
+        .filter((n) => !excludeNode || n.key !== excludeNode.key);
+    },
+    []
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -223,7 +256,11 @@ export function Grid({
 
     let dpr = 1;
 
-    const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
+    const drawGrid = (
+      ctx: CanvasRenderingContext2D,
+      width: number,
+      height: number
+    ) => {
       ctx.clearRect(0, 0, width, height);
       ctx.strokeStyle = lineColor;
       ctx.lineWidth = lineWidth;
@@ -241,11 +278,13 @@ export function Grid({
       for (const trail of trailsRef.current) {
         if (trail.opacity <= 0) continue;
 
-        const alpha = Math.floor(trail.opacity * 0.08 * 255).toString(16).padStart(2, '0');
+        const alpha = Math.floor(trail.opacity * 0.08 * 255)
+          .toString(16)
+          .padStart(2, '0');
 
         ctx.strokeStyle = lightColor + alpha;
         ctx.lineWidth = 1;
-        ctx.lineCap = "round";
+        ctx.lineCap = 'round';
         ctx.beginPath();
         ctx.moveTo(trail.fromX, trail.fromY);
 
@@ -269,12 +308,28 @@ export function Grid({
       for (const particle of particlesRef.current) {
         if (particle.dead) continue;
 
-        const x = particle.currentNode.x + (particle.targetNode.x - particle.currentNode.x) * particle.progress;
-        const y = particle.currentNode.y + (particle.targetNode.y - particle.currentNode.y) * particle.progress;
+        const history = particle.history;
+        if (history.length === 0) continue;
+
+        const head = history[history.length - 1];
+
+        if (history.length >= 2) {
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.strokeStyle = lightColor + '40';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(history[0].x, history[0].y);
+
+          for (let i = 1; i < history.length; i++) {
+            ctx.lineTo(history[i].x, history[i].y);
+          }
+          ctx.stroke();
+        }
 
         ctx.fillStyle = lightColor;
         ctx.beginPath();
-        ctx.arc(x, y, 3, 0, Math.PI * 2);
+        ctx.arc(head.x, head.y, 3, 0, Math.PI * 2);
         ctx.fill();
       }
     };
@@ -283,7 +338,9 @@ export function Grid({
       for (const explosion of explosionsRef.current) {
         if (explosion.opacity <= 0) continue;
 
-        const alpha = Math.floor(explosion.opacity * 255).toString(16).padStart(2, '0');
+        const alpha = Math.floor(explosion.opacity * 255)
+          .toString(16)
+          .padStart(2, '0');
         ctx.strokeStyle = lightColor + alpha;
         ctx.lineWidth = 2;
         ctx.beginPath();
@@ -297,7 +354,9 @@ export function Grid({
         explosion.radius += 0.5;
         explosion.opacity -= 0.08;
       }
-      explosionsRef.current = explosionsRef.current.filter(e => e.opacity > 0);
+      explosionsRef.current = explosionsRef.current.filter(
+        (e) => e.opacity > 0
+      );
     };
 
     const createExplosion = (x: number, y: number) => {
@@ -322,7 +381,9 @@ export function Grid({
       for (const glow of nodeGlowsRef.current) {
         if (glow.opacity <= 0) continue;
 
-        const alpha = Math.floor(glow.opacity * 0.4 * 255).toString(16).padStart(2, '0');
+        const alpha = Math.floor(glow.opacity * 0.4 * 255)
+          .toString(16)
+          .padStart(2, '0');
         ctx.fillStyle = lightColor + alpha;
         ctx.beginPath();
         ctx.arc(glow.x, glow.y, 2, 0, Math.PI * 2);
@@ -334,11 +395,13 @@ export function Grid({
       for (const glow of nodeGlowsRef.current) {
         glow.opacity -= trailFadeSpeed * 3;
       }
-      nodeGlowsRef.current = nodeGlowsRef.current.filter(g => g.opacity > 0);
+      nodeGlowsRef.current = nodeGlowsRef.current.filter((g) => g.opacity > 0);
     };
 
     const getRandomTravel = () => {
-      return Math.floor(Math.random() * (maxTravel - minTravel + 1)) + minTravel;
+      return (
+        Math.floor(Math.random() * (maxTravel - minTravel + 1)) + minTravel
+      );
     };
 
     const makeEdgeKey = (n1: Node, n2: Node) => {
@@ -346,23 +409,33 @@ export function Grid({
       return `${keys[0]}-${keys[1]}`;
     };
 
-    const spawnParticle = () => {
-      if (topNodesRef.current.length === 0) return;
+    const trySpawn = (fromTop: boolean): boolean => {
+      const sourceNodes = fromTop
+        ? topNodesRef.current
+        : bottomNodesRef.current;
+      const direction: 1 | -1 = fromTop ? 1 : -1;
 
-      const startNode = topNodesRef.current[Math.floor(Math.random() * topNodesRef.current.length)];
+      if (sourceNodes.length === 0) return false;
+
+      const startNode =
+        sourceNodes[Math.floor(Math.random() * sourceNodes.length)];
       const connectedNodes = getConnectedNodes(startNode);
 
-      const downwardNodes = connectedNodes.filter(n => n.y > startNode.y);
-      const targetNodes = downwardNodes.length > 0 ? downwardNodes : connectedNodes;
+      const preferredNodes = connectedNodes.filter((n) =>
+        fromTop ? n.y > startNode.y : n.y < startNode.y
+      );
+      const targetNodes =
+        preferredNodes.length > 0 ? preferredNodes : connectedNodes;
 
-      const availableNodes = targetNodes.filter(n => {
+      const availableNodes = targetNodes.filter((n) => {
         const key = makeEdgeKey(startNode, n);
         return !activeEdgesRef.current.has(key);
       });
 
-      if (availableNodes.length === 0) return;
+      if (availableNodes.length === 0) return false;
 
-      const targetNode = availableNodes[Math.floor(Math.random() * availableNodes.length)];
+      const targetNode =
+        availableNodes[Math.floor(Math.random() * availableNodes.length)];
       const edgeKeyStr = makeEdgeKey(startNode, targetNode);
       activeEdgesRef.current.add(edgeKeyStr);
 
@@ -375,6 +448,8 @@ export function Grid({
         maxTravel: getRandomTravel(),
         canSplit: true,
         dead: false,
+        direction,
+        history: [{ x: startNode.x, y: startNode.y }],
       });
 
       trailsRef.current.push({
@@ -386,25 +461,56 @@ export function Grid({
         opacity: 1,
         edgeKey: edgeKeyStr,
       });
+
+      return true;
+    };
+
+    const spawnParticle = () => {
+      if (bidirectional) {
+        const fromTop = spawnFromTopRef.current;
+        spawnFromTopRef.current = !spawnFromTopRef.current;
+
+        if (!trySpawn(fromTop)) {
+          trySpawn(!fromTop);
+        }
+      } else {
+        trySpawn(true);
+      }
     };
 
     const updateParticles = () => {
       const newParticles: Particle[] = [];
+      const maxHistoryLength = 10;
 
       for (const particle of particlesRef.current) {
         if (particle.dead) continue;
 
         particle.progress += lightSpeed * 0.02;
 
+        const currentX =
+          particle.currentNode.x +
+          (particle.targetNode.x - particle.currentNode.x) * particle.progress;
+        const currentY =
+          particle.currentNode.y +
+          (particle.targetNode.y - particle.currentNode.y) * particle.progress;
+        particle.history.push({ x: currentX, y: currentY });
+        if (particle.history.length > maxHistoryLength) {
+          particle.history.shift();
+        }
+
         const trailIndex = trailsRef.current.findIndex(
-          t => t.fromX === particle.currentNode.x &&
-               t.fromY === particle.currentNode.y &&
-               t.toX === particle.targetNode.x &&
-               t.toY === particle.targetNode.y &&
-               t.progress < 1
+          (t) =>
+            t.fromX === particle.currentNode.x &&
+            t.fromY === particle.currentNode.y &&
+            t.toX === particle.targetNode.x &&
+            t.toY === particle.targetNode.y &&
+            t.progress < 1
         );
         if (trailIndex !== -1) {
-          trailsRef.current[trailIndex].progress = Math.min(particle.progress, 1);
+          trailsRef.current[trailIndex].progress = Math.min(
+            particle.progress,
+            1
+          );
         }
 
         if (particle.progress >= 1) {
@@ -420,9 +526,12 @@ export function Grid({
           }
 
           const currentNode = particle.targetNode;
-          const connectedNodes = getConnectedNodes(currentNode, particle.currentNode);
+          const connectedNodes = getConnectedNodes(
+            currentNode,
+            particle.currentNode
+          );
 
-          const availableNodes = connectedNodes.filter(n => {
+          const availableNodes = connectedNodes.filter((n) => {
             const key = makeEdgeKey(currentNode, n);
             return !activeEdgesRef.current.has(key);
           });
@@ -433,10 +542,15 @@ export function Grid({
             continue;
           }
 
-          const shouldSplit = particle.canSplit && Math.random() < splitChance && availableNodes.length >= 2;
+          const shouldSplit =
+            particle.canSplit &&
+            Math.random() < splitChance &&
+            availableNodes.length >= 2;
 
           if (shouldSplit) {
-            const shuffled = [...availableNodes].sort(() => Math.random() - 0.5);
+            const shuffled = [...availableNodes].sort(
+              () => Math.random() - 0.5
+            );
             const target1 = shuffled[0];
             const target2 = shuffled[1];
 
@@ -469,6 +583,8 @@ export function Grid({
               maxTravel: particle.maxTravel,
               canSplit: false,
               dead: false,
+              direction: particle.direction,
+              history: [{ x: currentNode.x, y: currentNode.y }],
             });
 
             trailsRef.current.push({
@@ -481,7 +597,8 @@ export function Grid({
               edgeKey: edgeKey2,
             });
           } else {
-            const targetNode = availableNodes[Math.floor(Math.random() * availableNodes.length)];
+            const targetNode =
+              availableNodes[Math.floor(Math.random() * availableNodes.length)];
             const newEdgeKey = makeEdgeKey(currentNode, targetNode);
             activeEdgesRef.current.add(newEdgeKey);
 
@@ -503,7 +620,7 @@ export function Grid({
       }
 
       particlesRef.current.push(...newParticles);
-      particlesRef.current = particlesRef.current.filter(p => !p.dead);
+      particlesRef.current = particlesRef.current.filter((p) => !p.dead);
     };
 
     const updateTrails = () => {
@@ -512,15 +629,15 @@ export function Grid({
           trail.opacity -= trailFadeSpeed;
         }
       }
-      const fadedTrails = trailsRef.current.filter(t => t.opacity <= 0);
+      const fadedTrails = trailsRef.current.filter((t) => t.opacity <= 0);
       for (const trail of fadedTrails) {
         activeEdgesRef.current.delete(trail.edgeKey);
       }
-      trailsRef.current = trailsRef.current.filter(t => t.opacity > 0);
+      trailsRef.current = trailsRef.current.filter((t) => t.opacity > 0);
     };
 
     const animate = (timestamp: number) => {
-      const ctx = canvas.getContext("2d");
+      const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
       const { width, height } = dimensionsRef.current;
@@ -584,7 +701,24 @@ export function Grid({
       resizeObserver.disconnect();
       cancelAnimationFrame(animationRef.current);
     };
-  }, [shape, cellSize, lineColor, lineWidth, animated, lightColor, lightSpeed, minTravel, maxTravel, spawnRate, splitChance, trailFadeSpeed, buildSquareGraph, buildHexGraph, getConnectedNodes]);
+  }, [
+    shape,
+    cellSize,
+    lineColor,
+    lineWidth,
+    animated,
+    lightColor,
+    lightSpeed,
+    minTravel,
+    maxTravel,
+    spawnRate,
+    splitChance,
+    trailFadeSpeed,
+    bidirectional,
+    buildSquareGraph,
+    buildHexGraph,
+    getConnectedNodes,
+  ]);
 
   return (
     <div ref={containerRef} className={`relative w-full h-full ${className}`}>
