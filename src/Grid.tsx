@@ -33,6 +33,8 @@ export interface GridProps {
   bidirectional?: boolean;
   /** Length of the light trail (number of history points) */
   trailLength?: number;
+  /** Size of the light particle head (default: 6) */
+  headSize?: number;
 }
 
 interface Node {
@@ -100,6 +102,7 @@ export function Grid({
   trailFadeSpeed = 0.01,
   bidirectional = false,
   trailLength = 15,
+  headSize = 6,
 }: GridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -349,9 +352,10 @@ export function Grid({
         ctx.save();
         ctx.translate(head.x, head.y);
         ctx.rotate(angle);
-        ctx.moveTo(-3, 0);
-        ctx.quadraticCurveTo(1, -2.5, 2, 0);
-        ctx.quadraticCurveTo(1, 2.5, -3, 0);
+        const scale = headSize / 5;
+        ctx.moveTo(-3 * scale, 0);
+        ctx.quadraticCurveTo(1 * scale, -2.5 * scale, 2 * scale, 0);
+        ctx.quadraticCurveTo(1 * scale, 2.5 * scale, -3 * scale, 0);
         ctx.restore();
         ctx.fill();
       }
@@ -416,7 +420,7 @@ export function Grid({
 
     const updateNodeGlows = () => {
       for (const glow of nodeGlowsRef.current) {
-        glow.opacity -= trailFadeSpeed * 3;
+        glow.opacity -= trailFadeSpeed * 1;
       }
       nodeGlowsRef.current = nodeGlowsRef.current.filter((g) => g.opacity > 0);
     };
@@ -739,6 +743,7 @@ export function Grid({
     trailFadeSpeed,
     bidirectional,
     trailLength,
+    headSize,
     buildSquareGraph,
     buildHexGraph,
     getConnectedNodes,
