@@ -31,6 +31,8 @@ export interface GridProps {
   trailFadeSpeed?: number;
   /** Enable spawning particles from the bottom as well as the top */
   bidirectional?: boolean;
+  /** Length of the light trail (number of history points) */
+  trailLength?: number;
 }
 
 interface Node {
@@ -97,6 +99,7 @@ export function Grid({
   splitChance = 0.3,
   trailFadeSpeed = 0.01,
   bidirectional = false,
+  trailLength = 15,
 }: GridProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -316,20 +319,40 @@ export function Grid({
         if (history.length >= 2) {
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
-          ctx.strokeStyle = lightColor + '40';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(history[0].x, history[0].y);
+          const r = parseInt(lightColor.slice(1, 3), 16);
+          const g = parseInt(lightColor.slice(3, 5), 16);
+          const b = parseInt(lightColor.slice(5, 7), 16);
+          const lighterR = Math.floor(r + (255 - r) * 0.6);
+          const lighterG = Math.floor(g + (255 - g) * 0.6);
+          const lighterB = Math.floor(b + (255 - b) * 0.6);
+          ctx.strokeStyle = `rgb(${lighterR}, ${lighterG}, ${lighterB})`;
 
+          const maxWidth = 4;
+          const minWidth = 0.5;
           for (let i = 1; i < history.length; i++) {
+            const progress = i / (history.length - 1);
+            ctx.lineWidth = minWidth + (maxWidth - minWidth) * progress;
+            ctx.beginPath();
+            ctx.moveTo(history[i - 1].x, history[i - 1].y);
             ctx.lineTo(history[i].x, history[i].y);
+            ctx.stroke();
           }
-          ctx.stroke();
         }
 
         ctx.fillStyle = lightColor;
         ctx.beginPath();
-        ctx.arc(head.x, head.y, 3, 0, Math.PI * 2);
+        let angle = 0;
+        if (history.length >= 2) {
+          const prev = history[history.length - 2];
+          angle = Math.atan2(head.y - prev.y, head.x - prev.x);
+        }
+        ctx.save();
+        ctx.translate(head.x, head.y);
+        ctx.rotate(angle);
+        ctx.moveTo(-3, 0);
+        ctx.quadraticCurveTo(1, -2.5, 2, 0);
+        ctx.quadraticCurveTo(1, 2.5, -3, 0);
+        ctx.restore();
         ctx.fill();
       }
     };
@@ -480,7 +503,7 @@ export function Grid({
 
     const updateParticles = () => {
       const newParticles: Particle[] = [];
-      const maxHistoryLength = 10;
+      const maxHistoryLength = trailLength;
 
       for (const particle of particlesRef.current) {
         if (particle.dead) continue;
@@ -715,6 +738,7 @@ export function Grid({
     splitChance,
     trailFadeSpeed,
     bidirectional,
+    trailLength,
     buildSquareGraph,
     buildHexGraph,
     getConnectedNodes,
